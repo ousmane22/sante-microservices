@@ -2,125 +2,158 @@ pipeline {
     agent any
     
     environment {
-        SONAR_HOST_URL = 'http://sonarqube:9000'
-        PROJECT_KEY = 'sante-microservices'
-        GITHUB_REPO = 'https://github.com/ousmane22/sante-microservices'
+        DOCKER_REGISTRY = 'localhost:5000'
+        TRIVY_SEVERITY = 'HIGH,CRITICAL'
+        TRIVY_EXIT_CODE = '1'
     }
-    
+
     stages {
-        stage('🚀 Checkout') {
-            steps {
-                echo '=== DevSecOps Pipeline Started ==='
-                checkout scm
-                script {
-                    def commit = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    def author = sh(script: 'git log -1 --pretty=format:"%an"', returnStdout: true).trim()
-                    echo "📋 Commit: ${commit} by ${author}"
-                    echo "📂 Repository: ${env.GITHUB_REPO}"
-                }
-            }
-        }
-
-        stage('🔍 Project Structure Analysis') {
-            steps {
-                script {
-                    echo '📊 Analyzing project structure...'
-
-                    // Détecter les services
-                    def services = []
-                    def javaFiles = 0
-                    def dockerFiles = 0
-
-                    if (fileExists('medecin-service')) {
-                        services.add('medecin-service')
-                        echo '✅ Medecin Service detected'
-                    }
-                    if (fileExists('patient-service')) {
-                        services.add('patient-service')
-                        echo '✅ Patient Service detected'
-                    }
-                    if (fileExists('rdv-service')) {
-                        services.add('rdv-service')
-                        echo '✅ RDV Service detected'
-                    }
-                    if (fileExists('dossier-service')) {
-                        services.add('dossier-service')
-                        echo '✅ Dossier Service detected'
-                    }
-                    if (fileExists('gateway')) {
-                        services.add('gateway')
-                        echo '✅ Gateway detected'
-                    }
-
-                    env.DETECTED_SERVICES = services.join(',')
-
-                    // Analyser le contenu
-                    javaFiles = sh(script: 'find . -name "*.java" | wc -l', returnStdout: true).trim() as Integer
-                    dockerFiles = sh(script: 'find . -name "Dockerfile" | wc -l', returnStdout: true).trim() as Integer
-
-                    echo """
-                    📊 PROJECT ANALYSIS:
-                    🎯 Services: ${services.size()}
-                    ☕ Java files: ${javaFiles}
-                    🐳 Dockerfiles: ${dockerFiles}
-                    📋 Services: ${env.DETECTED_SERVICES}
-                    """
-                }
-            }
-        }
-
-        stage('🛡️ Security Analysis') {
+        stage('🏗️ Build Docker Images') {
             parallel {
-                stage('Code Security Scan') {
+                stage('Build Medecin Service') {
                     steps {
-                        echo '🔍 Scanning for security issues...'
-                        sh '''
-                            echo "🔐 Security Analysis Started..."
+                        script {
+                            def image = docker.build("${DOCKER_REGISTRY}/medecin-service:${BUILD_NUMBER}", "./medecin-service")
+                            env.MEDECIN_IMAGE = "${DOCKER_REGISTRY}/medecin-service:${BUILD_NUMBER}"
+                        }
+                    }
+                }
+                stage('Build Patient Service') {
+                    steps {
+                        script {
+                            def image = docker.build("${DOCKER_REGISTRY}/patient-service:${BUILD_NUMBER}", "./patient-service")
+                            env.PATIENT_IMAGE = "${DOCKER_REGISTRY}/patient-service:${BUILD_NUMBER}"
+                        }
+                    }
+                }
+                stage('Build RDV Service') {
+                    steps {
+                        script {
+                            def image = docker.build("${DOCKER_REGISTRY}/rdv-service:${BUILD_NUMBER}", "./rdv-service")
+                            env.RDV_IMAGE = "${DOCKER_REGISTRY}/rdv-service:${BUILD_NUMBER}"
+                        }
+                    }
+                }
+                stage('Build Dossier Service') {
+                    steps {
+                        script {
+                            def image = docker.build("${DOCKER_REGISTRY}/dossier-service:${BUILD_NUMBER}", "./dossier-service")
+                            env.DOSSIER_IMAGE = "${DOCKER_REGISTRY}/dossier-service:${BUILD_NUMBER}"
+                        }
+                    }
+                }
+                stage('Build Gateway') {
+                    steps {
+                        script {
+                            def image = docker.build("${DOCKER_REGISTRY}/gateway:${BUILD_NUMBER}", "./gateway")
+                            env.GATEWAY_IMAGE = "${DOCKER_REGISTRY}/gateway:${BUILD_NUMBER}"
+                        }
+                    }
+                }
+            }
+        }
 
-                            # Recherche de mots de passe hardcodés
-                            echo "Checking for hardcoded passwords..."
-                            PASSWORDS=$(find . -name "*.java" -o -name "*.yml" -o -name "*.properties" | xargs grep -i "password.*=" | wc -l)
-                            echo "Password patterns found: $PASSWORDS"
+        stage('🔒 Security Scans') {
+            parallel {
+                stage('Trivy - Vulnerability Scan') {
+                    steps {
+                        script {
+                            def images = [
+                                env.MEDECIN_IMAGE,
+                                env.PATIENT_IMAGE,
+                                env.RDV_IMAGE,
+                                env.DOSSIER_IMAGE,
+                                env.GATEWAY_IMAGE
+                            ]
 
-                            # Recherche de clés API
-                            echo "Checking for API keys..."
-                            API_KEYS=$(find . -name "*.java" -o -name "*.yml" -o -name "*.properties" | xargs grep -i "api.key" | wc -l)
-                            echo "API key patterns found: $API_KEYS"
+                            images.each { imageName ->
+                                if (imageName) {
+                                    echo "🔍 Scanning ${imageName} with Trivy..."
 
-                            # Recherche de tokens
-                            echo "Checking for tokens..."
-                            TOKENS=$(find . -name "*.java" -o -name "*.yml" -o -name "*.properties" | xargs grep -i "token.*=" | wc -l)
-                            echo "Token patterns found: $TOKENS"
+                                    // Scan de vulnérabilités
+                                    sh """
+                                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \\
+                                        aquasec/trivy:latest image \\
+                                        --format json \\
+                                        --output ${imageName.split(':')[0].split('/')[1]}-trivy-report.json \\
+                                        --severity ${TRIVY_SEVERITY} \\
+                                        ${imageName}
+                                    """
 
-                            echo "✅ Security scan completed"
-                        '''
+                                    // Scan avec seuil d'échec
+                                    sh """
+                                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \\
+                                        aquasec/trivy:latest image \\
+                                        --severity ${TRIVY_SEVERITY} \\
+                                        --exit-code ${TRIVY_EXIT_CODE} \\
+                                        ${imageName}
+                                    """
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            // Archiver les rapports Trivy
+                            archiveArtifacts artifacts: '*-trivy-report.json', allowEmptyArchive: true
+
+                            // Publier les rapports HTML
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: '.',
+                                reportFiles: '*-trivy-report.json',
+                                reportName: 'Trivy Security Reports'
+                            ])
+                        }
                     }
                 }
 
-                stage('Dependency Analysis') {
+                stage('Docker Scout - Advanced Scan') {
                     steps {
-                        echo '📦 Analyzing dependencies...'
                         script {
-                            def services = env.DETECTED_SERVICES.split(',')
+                            def images = [
+                                env.MEDECIN_IMAGE,
+                                env.PATIENT_IMAGE,
+                                env.RDV_IMAGE,
+                                env.DOSSIER_IMAGE,
+                                env.GATEWAY_IMAGE
+                            ]
 
-                            services.each { service ->
-                                if (service && fileExists("${service}/pom.xml")) {
-                                    echo "📋 Analyzing dependencies for ${service}..."
-                                    dir(service) {
-                                        sh '''
-                                            echo "Reading pom.xml dependencies..."
-                                            if [ -f "pom.xml" ]; then
-                                                DEPS=$(grep -c "<dependency>" pom.xml || echo "0")
-                                                echo "Dependencies found: $DEPS"
+                            images.each { imageName ->
+                                if (imageName) {
+                                    echo "🔍 Scanning ${imageName} with Docker Scout..."
+                                    sh """
+                                        docker scout cves ${imageName} \\
+                                        --format json \\
+                                        --output ${imageName.split(':')[0].split('/')[1]}-scout-report.json || true
+                                    """
+                                }
+                            }
+                        }
+                    }
+                }
 
-                                                # Recherche de frameworks communs
-                                                echo "Checking for frameworks..."
-                                                grep -i "spring-boot" pom.xml && echo "✅ Spring Boot found" || echo "No Spring Boot"
-                                                grep -i "springframework" pom.xml && echo "✅ Spring Framework found" || echo "No Spring"
-                                            fi
-                                            echo "✅ Dependency analysis completed"
-                                        '''
-                                    }
+                stage('Grype - Additional Scan') {
+                    steps {
+                        script {
+                            def images = [
+                                env.MEDECIN_IMAGE,
+                                env.PATIENT_IMAGE,
+                                env.RDV_IMAGE,
+                                env.DOSSIER_IMAGE,
+                                env.GATEWAY_IMAGE
+                            ]
+
+                            images.each { imageName ->
+                                if (imageName) {
+                                    echo "🔍 Scanning ${imageName} with Grype..."
+                                    sh """
+                                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \\
+                                        anchore/grype:latest ${imageName} \\
+                                        -o json > ${imageName.split(':')[0].split('/')[1]}-grype-report.json || true
+                                    """
                                 }
                             }
                         }
@@ -129,182 +162,107 @@ pipeline {
             }
         }
 
-        stage('📊 Code Quality Analysis') {
+        stage('📊 Security Report Analysis') {
             steps {
-                echo '📊 Analyzing code quality...'
                 script {
-                    def services = env.DETECTED_SERVICES.split(',')
+                    echo '📋 Analyzing security scan results...'
 
-                    services.each { service ->
-                        if (service && fileExists(service)) {
-                            echo "🔍 Code analysis for ${service}..."
-                            dir(service) {
-                                sh '''
-                                    echo "Analyzing Java code structure..."
+                    // Compter les vulnérabilités par service
+                    sh '''
+                        echo "🔍 SECURITY SCAN SUMMARY:"
+                        echo "========================"
 
-                                    # Compter les fichiers par type
-                                    JAVA_FILES=$(find . -name "*.java" | wc -l)
-                                    TEST_FILES=$(find . -name "*Test.java" -o -name "*Tests.java" | wc -l)
-                                    YML_FILES=$(find . -name "*.yml" -o -name "*.yaml" | wc -l)
-                                    PROP_FILES=$(find . -name "*.properties" | wc -l)
+                        for report in *-trivy-report.json; do
+                            if [ -f "$report" ]; then
+                                service=$(echo $report | sed 's/-trivy-report.json//')
+                                critical=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' $report 2>/dev/null || echo "0")
+                                high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' $report 2>/dev/null || echo "0")
 
-                                    echo "📊 Code Statistics:"
-                                    echo "  Java files: $JAVA_FILES"
-                                    echo "  Test files: $TEST_FILES"
-                                    echo "  YAML files: $YML_FILES"
-                                    echo "  Properties files: $PROP_FILES"
+                                echo "📦 $service:"
+                                echo "  🔴 Critical: $critical"
+                                echo "  🟠 High: $high"
+                                echo ""
+                            fi
+                        done
 
-                                    echo "✅ Code analysis completed"
-                                '''
-                            }
-                        }
-                    }
+                        echo "📊 Overall Security Status:"
+                        total_critical=$(jq -s 'map(.[].Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")) | length' *-trivy-report.json 2>/dev/null || echo "0")
+                        total_high=$(jq -s 'map(.[].Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")) | length' *-trivy-report.json 2>/dev/null || echo "0")
+
+                        echo "🔴 Total Critical: $total_critical"
+                        echo "🟠 Total High: $total_high"
+
+                        if [ "$total_critical" -gt 0 ]; then
+                            echo "❌ SECURITY GATE: FAILED - Critical vulnerabilities found"
+                            exit 1
+                        elif [ "$total_high" -gt 5 ]; then
+                            echo "⚠️ SECURITY GATE: WARNING - Too many high severity vulnerabilities"
+                        else
+                            echo "✅ SECURITY GATE: PASSED - No critical issues"
+                        fi
+                    '''
                 }
             }
         }
 
-        stage('🐳 Docker Configuration Analysis') {
-            steps {
-                echo '🐳 Analyzing Docker setup...'
-                script {
-                    if (fileExists('docker-compose.yml')) {
-                        sh '''
-                            echo "📋 Docker Compose Analysis:"
-
-                            # Compter les services réels (pas les volumes/networks)
-                            REAL_SERVICES=$(grep "^  [a-zA-Z]" docker-compose.yml | grep -v "volumes:" | grep -v "networks:" | wc -l)
-                            echo "  Real services defined: $REAL_SERVICES"
-
-                            echo "📊 Service overview:"
-                            grep "^  [a-zA-Z]" docker-compose.yml | grep -v "volumes:" | grep -v "networks:" | head -15
-
-                            echo "🔍 Port mappings:"
-                            grep -A 2 "ports:" docker-compose.yml | grep -E "^\\s*-" | head -10 || echo "  No port mappings found"
-
-                            echo "✅ Docker analysis completed"
-                        '''
-                    } else {
-                        echo "⚠️ No docker-compose.yml found"
-                    }
-
-                    def services = env.DETECTED_SERVICES.split(',')
-                    services.each { service ->
-                        if (service && fileExists("${service}/Dockerfile")) {
-                            echo "🐳 Dockerfile analysis for ${service}..."
-                            dir(service) {
-                                sh '''
-                                    echo "Dockerfile content summary:"
-                                    grep -E "^FROM|^EXPOSE|^ENV" Dockerfile | head -5 || echo "Basic Dockerfile structure"
-                                    echo "✅ Dockerfile analysis completed"
-                                '''
-                            }
-                        }
-                    }
-                }
+        stage('🚀 Deploy Secure Images') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
             }
-        }
-
-        stage('📋 Generate Security Report') {
             steps {
-                script {
-                    def services = env.DETECTED_SERVICES.split(',')
-                    def javaFiles = sh(script: 'find . -name "*.java" | wc -l', returnStdout: true).trim()
-                    def testFiles = sh(script: 'find . -name "*Test.java" -o -name "*Tests.java" | wc -l', returnStdout: true).trim()
+                echo '🚀 Deploying security-approved images...'
+                sh '''
+                    echo "Images passed security scanning:"
+                    echo "✅ ${MEDECIN_IMAGE}"
+                    echo "✅ ${PATIENT_IMAGE}"
+                    echo "✅ ${RDV_IMAGE}"
+                    echo "✅ ${DOSSIER_IMAGE}"
+                    echo "✅ ${GATEWAY_IMAGE}"
 
-                    echo """
-                    📊 ===== DEVSECOPS SECURITY REPORT =====
-
-                    🎯 PROJECT OVERVIEW:
-                    Repository: ${env.GITHUB_REPO}
-                    Build: #${env.BUILD_NUMBER}
-                    Services: ${services.size()}
-                    Java Files: ${javaFiles}
-                    Test Files: ${testFiles}
-
-                    🛡️ SECURITY ASSESSMENT:
-                    ✅ Static code security scan: COMPLETED
-                    ✅ Dependency vulnerability check: COMPLETED
-                    ✅ Secret detection scan: COMPLETED
-                    ✅ Docker configuration review: COMPLETED
-
-                    📊 CODE QUALITY METRICS:
-                    ✅ Code structure analysis: PASSED
-                    ✅ Test coverage assessment: COMPLETED
-                    ✅ Configuration file review: PASSED
-
-                    🚀 DEVOPS READINESS:
-                    ✅ Docker containerization: CONFIGURED
-                    ✅ Microservices architecture: DETECTED
-                    ✅ CI/CD pipeline: ACTIVE
-
-                    📈 RECOMMENDATIONS:
-                    1. Add SonarQube detailed analysis
-                    2. Implement OWASP dependency check
-                    3. Add automated security tests
-                    4. Set up container vulnerability scanning
-                    5. Configure deployment automation
-
-                    🔗 NEXT STEPS:
-                    - Configure Maven build tools
-                    - Set up comprehensive testing
-                    - Implement security quality gates
-                    - Add monitoring and alerting
-
-                    ========================================
-                    """
-                }
+                    # Déploiement avec docker-compose
+                    docker-compose down
+                    docker-compose up -d
+                '''
             }
         }
     }
 
     post {
         always {
-            echo '🧹 Pipeline cleanup completed'
-            // Archiver les logs d'analyse
-            archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: true
+            // Nettoyer les images temporaires
+            sh 'docker system prune -f'
+
+            // Archiver tous les rapports de sécurité
+            archiveArtifacts artifacts: '*-*-report.json', allowEmptyArchive: true
         }
 
         success {
             echo """
-            🎉 ===== DEVSECOPS PIPELINE SUCCESS =====
+            🎉 ===== SECURITY PIPELINE SUCCESS =====
+            ✅ All images built successfully
+            ✅ Security scans completed
+            ✅ No critical vulnerabilities found
+            ✅ Images deployed securely
 
-            ✅ COMPLETED STAGES:
-            • Code checkout and analysis
-            • Security vulnerability scanning
-            • Code quality assessment
-            • Docker configuration review
-            • Comprehensive security report
+            📊 Security Reports Available:
+            • Trivy vulnerability reports
+            • Docker Scout analysis
+            • Grype additional scanning
 
-            📊 SECURITY STATUS: PASSED
-            🔧 BUILD STATUS: ANALYZED
-            📈 QUALITY STATUS: ASSESSED
-
-            🔗 ACCESS POINTS:
-            • Jenkins Dashboard: http://localhost:8090
-            • SonarQube: http://localhost:9000
-            • Application: http://localhost:9999
-            • Monitoring: http://localhost:3000
-
-            🚀 Your microservices security pipeline is operational!
-
-            =====================================
+            🔗 Access security dashboards for detailed analysis
+            ====================================
             """
         }
 
         failure {
             echo """
-            ❌ ===== PIPELINE FAILED =====
+            ❌ ===== SECURITY PIPELINE FAILED =====
+            🔍 Security vulnerabilities detected
+            📋 Review security reports for details
+            🛠️ Fix vulnerabilities before deployment
 
-            Please check the build logs for details.
-
-            Common issues:
-            • Git checkout problems
-            • File permission issues
-            • Network connectivity
-            • Missing dependencies
-
-            🔍 Check Jenkins console output for specific errors.
-            ============================
+            📊 Check archived security reports
+            ===================================
             """
         }
     }

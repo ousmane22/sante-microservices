@@ -246,6 +246,18 @@ services:
       - consul-network
     user: root
 
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: trivy-scanner
+    command: [ "server", "--listen", "0.0.0.0:8087" ]
+    ports:
+      - "8087:8087"
+    volumes:
+      - trivy-cache:/root/.cache/trivy
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - consul-network
+    restart: unless-stopped
 
 volumes:
   consul-data:
@@ -255,6 +267,9 @@ volumes:
   postgresql_sonar:
   jenkins_home:
   keycloak_data:
+  trivy-cache:
+    driver: local
+
 
 networks:
   consul-network:

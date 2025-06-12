@@ -31,10 +31,36 @@
 		<org.mapstruct.version>1.4.2.Final</org.mapstruct.version>
 		<mockito-junit-jupiter.version>5.14.1</mockito-junit-jupiter.version>
 		<spring-cloud.version>2024.0.1</spring-cloud.version>
+
+		<!-- Configuration SonarQube -->
+		<sonar.host.url>http://localhost:9000</sonar.host.url>
+		<sonar.projectKey>medical-dossier-service</sonar.projectKey>
+		<sonar.projectName>Dossier Service</sonar.projectName>
+		<sonar.sources>src/main/java</sonar.sources>
+		<sonar.tests>src/test/java</sonar.tests>
 		<sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
+		<sonar.coverage.jacoco.xmlReportPaths>target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+		<sonar.junit.reportPaths>target/surefire-reports</sonar.junit.reportPaths>
 		<sonar.dynamicAnalysis>reuseReports</sonar.dynamicAnalysis>
-		<sonar.jacoco.reportPath>${project.basedir}/../target/jacoco.exec</sonar.jacoco.reportPath>
 		<sonar.language>java</sonar.language>
+
+		<!-- Exclusions SonarQube -->
+		<sonar.coverage.exclusions>
+			**/config/**,
+			**/dto/**,
+			**/entity/**,
+			**/model/**,
+			**/exception/**,
+			**/*Application.java,
+			**/test/**
+		</sonar.coverage.exclusions>
+
+		<!-- Exclusions de duplication -->
+		<sonar.cpd.exclusions>
+			**/dto/**,
+			**/entity/**,
+			**/model/**
+		</sonar.cpd.exclusions>
 	</properties>
 	<dependencies>
 		<dependency>
