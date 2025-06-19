@@ -44,6 +44,23 @@ pipeline {
             }
         }
 
+
+         stage('🔧 Global Build Script') {
+                    steps {
+                        script {
+                            if (fileExists('build-all.sh')) {
+                                echo '📦 Found build-all.sh, executing global build script...'
+                                sh '''
+                                    chmod +x ./build-all.sh
+                                    ./build-all.sh
+                                '''
+                            } else {
+                                echo '⚠️ build-all.sh not found, skipping global build'
+                            }
+                        }
+                    }
+                }
+
         stage('🔍 Project Structure Analysis') {
             steps {
                 script {

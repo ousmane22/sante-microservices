@@ -259,8 +259,72 @@ services:
       - consul-network
     restart: unless-stopped
 
+
+  vault:
+    image: hashicorp/vault:1.15.2
+    container_name: vault-server
+    restart: unless-stopped
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/data
+      - vault-logs:/vault/logs
+      - ./vault/config:/vault/config:ro
+      - ./vault/policies:/vault/policies:ro
+    environment:
+      - VAULT_ADDR=http://0.0.0.0:8200
+      - VAULT_API_ADDR=http://0.0.0.0:8200
+      - VAULT_LOCAL_CONFIG={"storage":{"file":{"path":"/vault/data"}},"listener":{"tcp":{"address":"0.0.0.0:8200","tls_disable":true}},"default_lease_ttl":"168h","max_lease_ttl":"720h","ui":true}
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - consul-network
+      - vault-network
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8200/v1/sys/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    command: [ "vault", "server", "-config=/vault/config/vault.hcl" ]
+
+    # Vault Agent pour l'injection automatique de secrets
+  vault-agent:
+      image: hashicorp/vault:1.15.2
+      container_name: vault-agent
+      restart: unless-stopped
+      volumes:
+        - ./vault/agent:/vault/config:ro
+        - vault-secrets:/vault/secrets
+      environment:
+        - VAULT_ADDR=http://vault:8200
+      networks:
+        - vault-network
+      depends_on:
+        vault:
+          condition: service_healthy
+      command: [ "vault", "agent", "-config=/vault/config/agent.hcl" ]
+
+    # Vault UI (optionnel, interface web)
+  vault-ui:
+      image: djenriquez/vault-ui:latest
+      container_name: vault-ui
+      ports:
+        - "8201:8000"
+      environment:
+        - VAULT_URL_DEFAULT=http://vault:8200
+        - VAULT_AUTH_DEFAULT=USERPASS
+      networks:
+        - vault-network
+      depends_on:
+        - vault
+      restart: unless-stopped
+
 volumes:
   consul-data:
+  vault-data:
+  vault-logs:
+  vault-secrets:
   sonarqube_data:
   sonarqube_extensions:
   sonarqube_logs:
@@ -274,5 +338,8 @@ volumes:
 networks:
   consul-network:
     driver: bridge
+  vault-network:
+    driver: bridge
+    internal: false
   keycloak:
     driver: local

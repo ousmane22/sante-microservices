@@ -10,6 +10,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,6 +21,7 @@ import java.util.List;
 @Setter
 @RestController
 @RequestMapping("/api/v1/patients")
+@PreAuthorize("hasRole('MEDECIN')")
 public class PatientController {
 
    private final PatientService service;
