@@ -44,7 +44,7 @@ pipeline {
             }
         }
 
-        stage('🔍 Project Structure Analysiss') {
+        stage('🔍 Project Structure Analysis') {
             steps {
                 script {
                     echo '📊 Analyzing project structure...'
