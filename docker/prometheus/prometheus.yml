@@ -27,7 +27,7 @@ scrape_configs:
     metrics_path: '/actuator/prometheus'
     scrape_interval: 5s
     static_configs:
-      - targets: ['rdv-service:8082']
+      - targets: ['rdv-service:8086']
         labels:
           application: 'RDV Management Service'
           service_type: 'backend'

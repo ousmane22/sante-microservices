@@ -1,4 +1,4 @@
-# Configuration principale de Vault
+#Vault config
 
 # Stockage des données
 storage "file" {
